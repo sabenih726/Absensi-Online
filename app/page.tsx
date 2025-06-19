@@ -225,8 +225,8 @@ export default function AttendanceApp() {
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Header */}
         <div className="text-center py-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Sistem Absensi Online</h1>
-          <p className="text-gray-600">Catat kehadiran Anda dengan deteksi wajah</p>
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">ABSENSI LAMAN DAVINDO BAHMAN</h1>
+          <p className="text-gray-600">tidak absen gaji akan dipotong</p>
         </div>
 
         {/* Admin Access Section */}
