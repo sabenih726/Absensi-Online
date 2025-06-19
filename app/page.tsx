@@ -6,49 +6,30 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Clock, MapPin, User, Calendar, Camera, X } from "lucide-react"
+import { Clock, MapPin, User, Calendar, Camera, X, Database, Download, Trash2, Search } from "lucide-react"
 import FaceCapture from "./components/face-capture"
-
-// Tambahkan fungsi helper untuk localStorage
-const saveToLocalStorage = (key: string, data: any) => {
-  try {
-    localStorage.setItem(key, JSON.stringify(data))
-  } catch (error) {
-    console.error("Error saving to localStorage:", error)
-  }
-}
-
-const loadFromLocalStorage = (key: string) => {
-  try {
-    const item = localStorage.getItem(key)
-    return item ? JSON.parse(item) : null
-  } catch (error) {
-    console.error("Error loading from localStorage:", error)
-    return null
-  }
-}
-
-interface AttendanceRecord {
-  id: string
-  name: string
-  time: string
-  date: string
-  location: string
-  status: "masuk" | "keluar"
-  faceImage?: string
-}
+import { supabase, type AttendanceRecord } from "@/lib/supabase"
 
 export default function AttendanceApp() {
   const [name, setName] = useState("")
-  const [records, setRecords] = useState<AttendanceRecord[]>(() => {
-    if (typeof window !== "undefined") {
-      return loadFromLocalStorage("attendance-records") || []
-    }
-    return []
-  })
+  const [records, setRecords] = useState<AttendanceRecord[]>([])
   const [currentLocation, setCurrentLocation] = useState("Mendeteksi lokasi...")
   const [showFaceCapture, setShowFaceCapture] = useState(false)
   const [pendingAttendance, setPendingAttendance] = useState<"masuk" | "keluar" | null>(null)
+  const [showDatabase, setShowDatabase] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  // Admin states
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [showAdminLogin, setShowAdminLogin] = useState(false)
+  const [adminPassword, setAdminPassword] = useState("")
+  const [loginError, setLoginError] = useState("")
+  const [searchTerm, setSearchTerm] = useState("")
+
+  // Load data from Supabase on component mount
+  useEffect(() => {
+    loadAttendanceRecords()
+  }, [])
 
   useEffect(() => {
     if (navigator.geolocation) {
@@ -63,10 +44,59 @@ export default function AttendanceApp() {
     }
   }, [])
 
-  // Tambahkan useEffect ini setelah useEffect yang sudah ada
-  useEffect(() => {
-    saveToLocalStorage("attendance-records", records)
-  }, [records])
+  const loadAttendanceRecords = async () => {
+    try {
+      setLoading(true)
+      const { data, error } = await supabase.from("attendance").select("*").order("created_at", { ascending: false })
+
+      if (error) {
+        console.error("Error loading attendance records:", error)
+        return
+      }
+
+      const formattedRecords: AttendanceRecord[] = data.map((record) => ({
+        id: record.id,
+        name: record.name,
+        time: record.time,
+        date: record.date,
+        location: record.location,
+        status: record.status,
+        face_image: record.face_image,
+        created_at: record.created_at,
+      }))
+
+      setRecords(formattedRecords)
+    } catch (error) {
+      console.error("Error:", error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleAdminLogin = () => {
+    if (adminPassword === "admin123") {
+      setIsAdmin(true)
+      setShowAdminLogin(false)
+      setShowDatabase(true)
+      setAdminPassword("")
+      setLoginError("")
+    } else {
+      setLoginError("Password admin salah!")
+    }
+  }
+
+  const handleAdminLogout = () => {
+    setIsAdmin(false)
+    setShowDatabase(false)
+  }
+
+  const handleDatabaseAccess = () => {
+    if (isAdmin) {
+      setShowDatabase(true)
+    } else {
+      setShowAdminLogin(true)
+    }
+  }
 
   const handleAttendanceClick = (status: "masuk" | "keluar") => {
     if (!name.trim()) {
@@ -78,24 +108,40 @@ export default function AttendanceApp() {
     setShowFaceCapture(true)
   }
 
-  const handleFaceCapture = (faceImage: string) => {
+  const handleFaceCapture = async (faceImage: string) => {
     if (!pendingAttendance) return
 
-    const now = new Date()
-    const newRecord: AttendanceRecord = {
-      id: Date.now().toString(),
-      name: name.trim(),
-      time: now.toLocaleTimeString("id-ID"),
-      date: now.toLocaleDateString("id-ID"),
-      location: currentLocation,
-      status: pendingAttendance,
-      faceImage,
-    }
+    try {
+      const now = new Date()
+      const newRecord = {
+        name: name.trim(),
+        time: now.toLocaleTimeString("id-ID"),
+        date: now.toLocaleDateString("id-ID"),
+        location: currentLocation,
+        status: pendingAttendance,
+        face_image: faceImage,
+      }
 
-    setRecords((prev) => [newRecord, ...prev])
-    setName("")
-    setShowFaceCapture(false)
-    setPendingAttendance(null)
+      const { data, error } = await supabase.from("attendance").insert([newRecord]).select()
+
+      if (error) {
+        console.error("Error saving attendance:", error)
+        alert("Gagal menyimpan data absensi. Silakan coba lagi.")
+        return
+      }
+
+      // Reload data from database
+      await loadAttendanceRecords()
+
+      setName("")
+      setShowFaceCapture(false)
+      setPendingAttendance(null)
+
+      alert(`Absensi ${pendingAttendance} berhasil disimpan!`)
+    } catch (error) {
+      console.error("Error:", error)
+      alert("Terjadi kesalahan. Silakan coba lagi.")
+    }
   }
 
   const handleCancelCapture = () => {
@@ -103,10 +149,75 @@ export default function AttendanceApp() {
     setPendingAttendance(null)
   }
 
-  const handleDeleteRecord = (id: string) => {
-    const updatedRecords = records.filter((record) => record.id !== id)
-    setRecords(updatedRecords)
-    saveToLocalStorage("attendance-records", updatedRecords)
+  const handleDeleteRecord = async (id: string) => {
+    if (!confirm("Apakah Anda yakin ingin menghapus data ini?")) return
+
+    try {
+      const { error } = await supabase.from("attendance").delete().eq("id", id)
+
+      if (error) {
+        console.error("Error deleting record:", error)
+        alert("Gagal menghapus data. Silakan coba lagi.")
+        return
+      }
+
+      // Reload data from database
+      await loadAttendanceRecords()
+      alert("Data berhasil dihapus!")
+    } catch (error) {
+      console.error("Error:", error)
+      alert("Terjadi kesalahan. Silakan coba lagi.")
+    }
+  }
+
+  const exportAllData = () => {
+    const csvContent = [
+      ["ID", "Nama", "Tanggal", "Waktu", "Status", "Lokasi", "Verifikasi", "Dibuat"],
+      ...records.map((record) => [
+        record.id,
+        record.name,
+        record.date,
+        record.time,
+        record.status,
+        record.location,
+        record.face_image ? "Terverifikasi" : "Tidak ada foto",
+        record.created_at,
+      ]),
+    ]
+      .map((row) => row.join(","))
+      .join("\n")
+
+    const blob = new Blob([csvContent], { type: "text/csv" })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `semua-absensi-${new Date().toISOString().split("T")[0]}.csv`
+    a.click()
+    window.URL.revokeObjectURL(url)
+  }
+
+  // Filter records based on search term
+  const filteredRecords = records.filter(
+    (record) =>
+      record.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      record.date.includes(searchTerm) ||
+      record.status.includes(searchTerm),
+  )
+
+  // Calculate statistics
+  const todayRecords = records.filter((record) => record.date === new Date().toLocaleDateString("id-ID"))
+  const masukCount = todayRecords.filter((record) => record.status === "masuk").length
+  const keluarCount = todayRecords.filter((record) => record.status === "keluar").length
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Memuat data absensi...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -116,6 +227,27 @@ export default function AttendanceApp() {
         <div className="text-center py-8">
           <h1 className="text-4xl font-bold text-gray-900 mb-2">Sistem Absensi Online</h1>
           <p className="text-gray-600">Catat kehadiran Anda dengan deteksi wajah</p>
+        </div>
+
+        {/* Admin Access Section */}
+        <div className="flex justify-center">
+          {isAdmin ? (
+            <div className="flex gap-2">
+              <Button onClick={() => setShowDatabase(!showDatabase)} className="flex items-center gap-2">
+                <Database className="w-4 h-4" />
+                {showDatabase ? "Tutup Database" : "Lihat Database Absensi"}
+              </Button>
+              <Button onClick={handleAdminLogout} variant="outline" className="flex items-center gap-2">
+                <User className="w-4 h-4" />
+                Logout Admin
+              </Button>
+            </div>
+          ) : (
+            <Button onClick={handleDatabaseAccess} variant="outline" className="flex items-center gap-2">
+              <Database className="w-4 h-4" />
+              Akses Admin Database
+            </Button>
+          )}
         </div>
 
         {/* Face Capture Modal */}
@@ -133,6 +265,48 @@ export default function AttendanceApp() {
                 onCancel={handleCancelCapture}
                 attendanceType={pendingAttendance}
               />
+            </div>
+          </div>
+        )}
+
+        {/* Admin Login Modal */}
+        {showAdminLogin && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold">Login Admin</h3>
+                <Button variant="ghost" size="sm" onClick={() => setShowAdminLogin(false)}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="space-y-4">
+                <div className="text-center">
+                  <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <User className="w-8 h-8 text-blue-600" />
+                  </div>
+                  <p className="text-gray-600">Masukkan password admin untuk mengakses database absensi</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="admin-password">Password Admin</Label>
+                  <Input
+                    id="admin-password"
+                    type="password"
+                    placeholder="Masukkan password admin"
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    onKeyPress={(e) => e.key === "Enter" && handleAdminLogin()}
+                  />
+                  {loginError && <p className="text-sm text-red-600">{loginError}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <Button onClick={handleAdminLogin} className="flex-1">
+                    Login
+                  </Button>
+                  <Button onClick={() => setShowAdminLogin(false)} variant="outline">
+                    Batal
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -222,12 +396,12 @@ export default function AttendanceApp() {
               <div className="text-center py-8 text-gray-500">Belum ada data absensi hari ini</div>
             ) : (
               <div className="space-y-3">
-                {records.map((record) => (
+                {records.slice(0, 5).map((record) => (
                   <div key={record.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                     <div className="flex items-center gap-3">
-                      {record.faceImage ? (
+                      {record.face_image ? (
                         <img
-                          src={record.faceImage || "/placeholder.svg"}
+                          src={record.face_image || "/placeholder.svg"}
                           alt="Face verification"
                           className="w-10 h-10 rounded-full object-cover border-2 border-blue-200"
                         />
@@ -242,7 +416,7 @@ export default function AttendanceApp() {
                           {record.date} • {record.time}
                         </div>
                         <div className="text-xs text-gray-500">📍 {record.location}</div>
-                        {record.faceImage && (
+                        {record.face_image && (
                           <div className="text-xs text-green-600 flex items-center gap-1">
                             <Camera className="w-3 h-3" />
                             Terverifikasi
@@ -258,10 +432,148 @@ export default function AttendanceApp() {
                     </Badge>
                   </div>
                 ))}
+                {records.length > 5 && (
+                  <div className="text-center text-sm text-gray-500">
+                    Dan {records.length - 5} data lainnya... (Lihat semua di Admin Dashboard)
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
         </Card>
+
+        {/* Admin Panel Modal */}
+        {showDatabase && isAdmin && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg w-full max-w-7xl h-[90vh] overflow-auto">
+              <div className="p-6">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-2xl font-bold">Admin Dashboard</h2>
+                  <Button variant="ghost" onClick={() => setShowDatabase(false)}>
+                    <X className="w-5 h-5" />
+                  </Button>
+                </div>
+
+                {/* Statistics Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="text-2xl font-bold text-blue-600">{records.length}</div>
+                      <div className="text-sm text-gray-600">Total Absensi</div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="text-2xl font-bold text-green-600">{masukCount}</div>
+                      <div className="text-sm text-gray-600">Masuk Hari Ini</div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="text-2xl font-bold text-red-600">{keluarCount}</div>
+                      <div className="text-sm text-gray-600">Keluar Hari Ini</div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-4">
+                      <div className="text-2xl font-bold text-purple-600">{todayRecords.length}</div>
+                      <div className="text-sm text-gray-600">Total Hari Ini</div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Controls */}
+                <div className="flex flex-col sm:flex-row gap-4 mb-6">
+                  <div className="flex-1">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                      <Input
+                        placeholder="Cari berdasarkan nama, tanggal, atau status..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-10"
+                      />
+                    </div>
+                  </div>
+                  <Button onClick={exportAllData} className="flex items-center gap-2">
+                    <Download className="w-4 h-4" />
+                    Export CSV
+                  </Button>
+                </div>
+
+                {/* Data Table */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Semua Data Absensi ({filteredRecords.length} records)</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b">
+                            <th className="text-left p-2">Foto</th>
+                            <th className="text-left p-2">Nama</th>
+                            <th className="text-left p-2">Tanggal</th>
+                            <th className="text-left p-2">Waktu</th>
+                            <th className="text-left p-2">Status</th>
+                            <th className="text-left p-2">Lokasi</th>
+                            <th className="text-left p-2">Aksi</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredRecords.map((record) => (
+                            <tr key={record.id} className="border-b hover:bg-gray-50">
+                              <td className="p-2">
+                                {record.face_image ? (
+                                  <img
+                                    src={record.face_image || "/placeholder.svg"}
+                                    alt="Face"
+                                    className="w-8 h-8 rounded-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+                                    <User className="w-4 h-4 text-gray-500" />
+                                  </div>
+                                )}
+                              </td>
+                              <td className="p-2 font-medium">{record.name}</td>
+                              <td className="p-2">{record.date}</td>
+                              <td className="p-2">{record.time}</td>
+                              <td className="p-2">
+                                <Badge
+                                  variant={record.status === "masuk" ? "default" : "destructive"}
+                                  className={record.status === "masuk" ? "bg-green-100 text-green-800" : ""}
+                                >
+                                  {record.status === "masuk" ? "Masuk" : "Keluar"}
+                                </Badge>
+                              </td>
+                              <td className="p-2 text-xs text-gray-600 max-w-32 truncate">{record.location}</td>
+                              <td className="p-2">
+                                <Button
+                                  onClick={() => handleDeleteRecord(record.id!)}
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-red-600 hover:text-red-800"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {filteredRecords.length === 0 && (
+                      <div className="text-center py-8 text-gray-500">
+                        {searchTerm ? "Tidak ada data yang sesuai dengan pencarian" : "Belum ada data absensi"}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
