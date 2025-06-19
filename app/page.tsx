@@ -1,13 +1,16 @@
 "use client"
 
+import type React from "react"
+
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Clock, MapPin, User, Calendar, Camera, X } from "lucide-react"
+import { Clock, MapPin, User, Calendar, Camera, X, Database } from "lucide-react"
 import FaceCapture from "./components/face-capture"
+import AdminPanel from "./components/admin-panel"
 
 interface AttendanceRecord {
   id: string
@@ -19,12 +22,101 @@ interface AttendanceRecord {
   faceImage?: string
 }
 
+interface DatabaseViewProps {
+  records: AttendanceRecord[]
+  onClose: () => void
+}
+
+const DatabaseView: React.FC<DatabaseViewProps> = ({ records, onClose }) => {
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg p-6 max-w-4xl w-full overflow-auto max-h-[90vh]">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold">Database Absensi</h3>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+        {records.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">Belum ada data absensi</div>
+        ) : (
+          <table className="w-full">
+            <thead>
+              <tr>
+                <th className="text-left">Nama</th>
+                <th className="text-left">Waktu</th>
+                <th className="text-left">Tanggal</th>
+                <th className="text-left">Lokasi</th>
+                <th className="text-left">Status</th>
+                <th className="text-left">Wajah</th>
+              </tr>
+            </thead>
+            <tbody>
+              {records.map((record) => (
+                <tr key={record.id} className="border-b">
+                  <td className="py-2">{record.name}</td>
+                  <td className="py-2">{record.time}</td>
+                  <td className="py-2">{record.date}</td>
+                  <td className="py-2">{record.location}</td>
+                  <td className="py-2">{record.status}</td>
+                  <td className="py-2">
+                    {record.faceImage ? (
+                      <img
+                        src={record.faceImage || "/placeholder.svg"}
+                        alt="Face verification"
+                        className="w-10 h-10 rounded-full object-cover"
+                      />
+                    ) : (
+                      "Tidak ada"
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function AttendanceApp() {
   const [name, setName] = useState("")
   const [records, setRecords] = useState<AttendanceRecord[]>([])
   const [currentLocation, setCurrentLocation] = useState("Mendeteksi lokasi...")
   const [showFaceCapture, setShowFaceCapture] = useState(false)
   const [pendingAttendance, setPendingAttendance] = useState<"masuk" | "keluar" | null>(null)
+  const [showDatabase, setShowDatabase] = useState(false)
+
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [showAdminLogin, setShowAdminLogin] = useState(false)
+  const [adminPassword, setAdminPassword] = useState("")
+  const [loginError, setLoginError] = useState("")
+
+  const handleAdminLogin = () => {
+    if (adminPassword === "admin123") {
+      setIsAdmin(true)
+      setShowAdminLogin(false)
+      setShowDatabase(true)
+      setAdminPassword("")
+      setLoginError("")
+    } else {
+      setLoginError("Password admin salah!")
+    }
+  }
+
+  const handleAdminLogout = () => {
+    setIsAdmin(false)
+    setShowDatabase(false)
+  }
+
+  const handleDatabaseAccess = () => {
+    if (isAdmin) {
+      setShowDatabase(true)
+    } else {
+      setShowAdminLogin(true)
+    }
+  }
 
   useEffect(() => {
     if (navigator.geolocation) {
@@ -74,6 +166,35 @@ export default function AttendanceApp() {
     setPendingAttendance(null)
   }
 
+  const handleDeleteRecord = (id: string) => {
+    setRecords((prev) => prev.filter((record) => record.id !== id))
+  }
+
+  const exportAllData = () => {
+    const csvContent = [
+      ["ID", "Nama", "Tanggal", "Waktu", "Status", "Lokasi", "Verifikasi"],
+      ...records.map((record) => [
+        record.id,
+        record.name,
+        record.date,
+        record.time,
+        record.status,
+        record.location,
+        record.faceImage ? "Terverifikasi" : "Tidak ada foto",
+      ]),
+    ]
+      .map((row) => row.join(","))
+      .join("\n")
+
+    const blob = new Blob([csvContent], { type: "text/csv" })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `semua-absensi-${new Date().toISOString().split("T")[0]}.csv`
+    a.click()
+    window.URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="max-w-4xl mx-auto space-y-6">
@@ -81,6 +202,27 @@ export default function AttendanceApp() {
         <div className="text-center py-8">
           <h1 className="text-4xl font-bold text-gray-900 mb-2">Sistem Absensi Online</h1>
           <p className="text-gray-600">Catat kehadiran Anda dengan deteksi wajah</p>
+        </div>
+
+        {/* Admin Access Section */}
+        <div className="flex justify-center">
+          {isAdmin ? (
+            <div className="flex gap-2">
+              <Button onClick={() => setShowDatabase(!showDatabase)} className="flex items-center gap-2">
+                <Database className="w-4 h-4" />
+                {showDatabase ? "Tutup Database" : "Lihat Database Absensi"}
+              </Button>
+              <Button onClick={handleAdminLogout} variant="outline" className="flex items-center gap-2">
+                <User className="w-4 h-4" />
+                Logout Admin
+              </Button>
+            </div>
+          ) : (
+            <Button onClick={handleDatabaseAccess} variant="outline" className="flex items-center gap-2">
+              <Database className="w-4 h-4" />
+              Akses Admin Database
+            </Button>
+          )}
         </div>
 
         {/* Face Capture Modal */}
@@ -98,6 +240,48 @@ export default function AttendanceApp() {
                 onCancel={handleCancelCapture}
                 attendanceType={pendingAttendance}
               />
+            </div>
+          </div>
+        )}
+
+        {/* Admin Login Modal */}
+        {showAdminLogin && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold">Login Admin</h3>
+                <Button variant="ghost" size="sm" onClick={() => setShowAdminLogin(false)}>
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="space-y-4">
+                <div className="text-center">
+                  <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <User className="w-8 h-8 text-blue-600" />
+                  </div>
+                  <p className="text-gray-600">Masukkan password admin untuk mengakses database absensi</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="admin-password">Password Admin</Label>
+                  <Input
+                    id="admin-password"
+                    type="password"
+                    placeholder="Masukkan password admin"
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    onKeyPress={(e) => e.key === "Enter" && handleAdminLogin()}
+                  />
+                  {loginError && <p className="text-sm text-red-600">{loginError}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <Button onClick={handleAdminLogin} className="flex-1">
+                    Login
+                  </Button>
+                  <Button onClick={() => setShowAdminLogin(false)} variant="outline">
+                    Batal
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -227,6 +411,23 @@ export default function AttendanceApp() {
             )}
           </CardContent>
         </Card>
+
+        {/* Admin Panel */}
+        {showDatabase && isAdmin && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg w-full max-w-7xl h-[90vh] overflow-auto">
+              <div className="p-6">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-2xl font-bold">Database Admin</h2>
+                  <Button variant="ghost" onClick={() => setShowDatabase(false)}>
+                    <X className="w-5 h-5" />
+                  </Button>
+                </div>
+                <AdminPanel records={records} onDeleteRecord={handleDeleteRecord} onExportData={exportAllData} />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
